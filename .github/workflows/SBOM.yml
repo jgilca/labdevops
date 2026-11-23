@@ -1,0 +1,35 @@
+name: 5. SBOM & Audit Evidence
+ 
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+ 
+permissions:
+  contents: read # Mínimo privilegio explícito (Slide 266)
+ 
+jobs:
+  generar-sbom:
+    name: Generar SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+ 
+      - name: Construir imagen de producción
+        run: docker build -t mi-app:${{ github.sha }} .
+ 
+      - name: Generar SBOM con Syft/Trivy en formato CycloneDX JSON
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'mi-app:${{ github.sha }}'
+          format: 'cyclonedx'
+          output: 'sbom-produccion.json'
+ 
+      - name: Guardar evidencia de auditoría (Artefacto inmutable)
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidencia-sbom-${{ github.sha }}
+          path: sbom-produccion.json
+          retention-days: 30

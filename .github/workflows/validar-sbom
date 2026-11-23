@@ -1,0 +1,59 @@
+name: 6. Validar SBOM (Licencias y CVEs)
+ 
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+ 
+permissions:
+  contents: read
+ 
+jobs:
+  auditar-sbom:
+    name: Auditoría de Licencias y CVEs sobre SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+ 
+      - name: Construir imagen Docker
+        run: docker build -t mi-app:${{ github.sha }} .
+ 
+      - name: 1. Generar SBOM (CycloneDX JSON) con Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'mi-app:${{ github.sha }}'
+          format: 'cyclonedx'
+          output: 'sbom-produccion.json'
+ 
+      - name: 2. Validar cumplimiento de licencias en el SBOM (Compliance Legal)
+        run: |
+          echo "=== Inventario de Licencias Detectadas ==="
+          jq -r '.components[] | "\(.name)@\(.version) -> \(.licenses[0].license.id // "NO-DECLARADA")"' sbom-produccion.json
+ 
+          echo "=== Buscando licencias restrictivas/virales (GPL / AGPL) ==="
+          PROHIBIDAS=$(jq -r '.components[] | select(.licenses != null) | select(.licenses[].license.id | test("GPL|AGPL"; "i")) | "\(.name) (\(.licenses[].license.id))"' sbom-produccion.json)
+ 
+          if [ -n "$PROHIBIDAS" ]; then
+            echo "ERROR DE COMPLIANCE: Se han detectado dependencias con licencias restringidas:"
+            echo "$PROHIBIDAS"
+            exit 1
+          fi
+          echo "OK: Todas las licencias cumplen con la política de la organización."
+ 
+      - name: 3. Re-escanear vulnerabilidades directamente desde el JSON del SBOM
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'sbom'
+          scan-ref: 'sbom-produccion.json'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL'
+ 
+      - name: 4. Guardar SBOM validado como evidencia de auditoría
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-validado-${{ github.sha }}
+          path: sbom-produccion.json
+          retention-days: 30
